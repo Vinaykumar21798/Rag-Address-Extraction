@@ -1,0 +1,8 @@
+local_model/
+vector_db/
+registry.db
+extraction.log
+.pytest_cache/
+__pycache__/
+*.pyc
+.env

@@ -1,0 +1,2 @@
+class LLMUnavailable(Exception):
+    pass
