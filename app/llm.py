@@ -34,6 +34,11 @@ else:
         )
 
 def generate(messages, max_tokens=128):
+    if os.environ.get("MOCK_LLM") == "true":
+        prompt_content = messages[-1]["content"] if messages else ""
+        if "address" in prompt_content.lower() or "postal" in prompt_content.lower():
+            return '{"addresses": [{"street": "1600 Pennsylvania Ave NW", "city": "Washington", "state": "DC", "zip": "20500"}]}'
+        return '{"answer": "This is a mock RAG answer for query.", "sources": ["letter_dc.txt"], "context_found": true}'
     try:
         prompt = tokenizer.apply_chat_template(
             messages,
