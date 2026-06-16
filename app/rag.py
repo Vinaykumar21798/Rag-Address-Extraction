@@ -15,6 +15,11 @@ class AskResponse(BaseModel):
 def answer_question(question: str, db=None) -> AskResponse:
     start_time = time.time()
     results = retrieve(question, top_k=4)
+    
+    # Hallucination guardrail: if the best retrieved chunk relevance score is extremely low, decline immediately
+    if not results or max(res["score"] for res in results) < -1.0:
+        return AskResponse(answer="I don't know", sources=[], context_found=False)
+        
     context_parts = []
     retrieved_filenames = []
     for res in results:
@@ -26,21 +31,29 @@ def answer_question(question: str, db=None) -> AskResponse:
     context = "\n\n".join(context_parts)
     messages = [
         {
+            "role": "system",
+            "content": (
+                "You are a strict, factual Q&A assistant. Answer the question using ONLY the provided context.\n"
+                "If the context does not explicitly, directly and clearly contain the answer to the question, you MUST reply exactly 'I don't know'.\n"
+                "Do not extrapolate, assume, or make up details. Do not use outside knowledge."
+            )
+        },
+        {
             "role": "user",
             "content": (
-                "Answer the user's question using ONLY the provided context.\n"
-                "If the context does not explicitly contain the answer, you MUST reply exactly 'I don't know'.\n"
-                "Do not extrapolate. Format your output as a JSON object with keys:\n"
-                "\"answer\" (string), \"sources\" (list of strings representing filenames used), and \"context_found\" (boolean).\n\n"
                 f"Context:\n{context}\n\n"
                 f"Question: {question}\n\n"
+                "Format your response as a JSON object with keys:\n"
+                "\"answer\" (string, or exactly \"I don't know\"),\n"
+                "\"sources\" (list of strings representing filenames used, or empty list if answer is \"I don't know\"),\n"
+                "\"context_found\" (boolean, true if answer is found in context, false otherwise).\n\n"
                 "JSON response:"
             )
         }
     ]
     response_text = ""
     try:
-        response_text = generate(messages, max_tokens=150)
+        response_text = generate(messages, max_tokens=60)
 
     except LLMUnavailable:
         raise
