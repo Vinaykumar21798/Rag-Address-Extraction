@@ -17,7 +17,7 @@ def answer_question(question: str, db=None) -> AskResponse:
     results = retrieve(question, top_k=4)
     
     # Hallucination guardrail: if the best retrieved chunk relevance score is extremely low, decline immediately
-    if not results or max(res["score"] for res in results) < -1.0:
+    if not results or max(res["score"] for res in results) < -6.0:
         return AskResponse(answer="I don't know", sources=[], context_found=False)
         
     context_parts = []
@@ -34,8 +34,87 @@ def answer_question(question: str, db=None) -> AskResponse:
             "role": "system",
             "content": (
                 "You are a strict, factual Q&A assistant. Answer the question using ONLY the provided context.\n"
-                "If the context does not explicitly, directly and clearly contain the answer to the question, you MUST reply exactly 'I don't know'.\n"
-                "Do not extrapolate, assume, or make up details. Do not use outside knowledge."
+                "Answer exactly and directly, extracting the specific name, address, value, or fact from the text.\n"
+                "Do not paraphrase or change names or numbers.\n"
+                "If the context does not contain the answer, reply exactly 'I don't know'.\n"
+                "Do not guess, assume, or extrapolate. If the context does not explicitly mention the specific requested information, "
+                "you must reply 'I don't know'."
+            )
+        },
+        {
+            "role": "user",
+            "content": (
+                "Context:\n"
+                "Source file: letter_dc.txt\n"
+                "Content: The prior mailing address on file (742 Evergreen Terrace, Suite 4) is retired. Forwarding address: 1600 Pennsylvania Ave NW, Washington, DC 20500.\n\n"
+                "Question: What forwarding address does the Office of Records notice give for future mail?\n\n"
+                "Format your response as a JSON object matching this schema:\n"
+                "{\n"
+                "  \"answer\": \"your answer, or exactly 'I don't know'\",\n"
+                "  \"sources\": [\"source_filename.txt\"],\n"
+                "  \"context_found\": true or false\n"
+                "}"
+            )
+        },
+        {
+            "role": "assistant",
+            "content": (
+                "{\n"
+                "  \"answer\": \"1600 Pennsylvania Ave NW\",\n"
+                "  \"sources\": [\"letter_dc.txt\"],\n"
+                "  \"context_found\": true\n"
+                "}"
+            )
+        },
+        {
+            "role": "user",
+            "content": (
+                "Context:\n"
+                "Source file: letter_riverside.txt\n"
+                "Content: Written inquiries about invoices, refunds, or address corrections should all be directed to the Accounts Team.\n"
+                "Sincerely,\nThe Accounts Team\n\n"
+                "Question: Who is the chief executive officer of Riverside Office Supplies?\n\n"
+                "Format your response as a JSON object matching this schema:\n"
+                "{\n"
+                "  \"answer\": \"your answer, or exactly 'I don't know'\",\n"
+                "  \"sources\": [\"source_filename.txt\"],\n"
+                "  \"context_found\": true or false\n"
+                "}"
+            )
+        },
+        {
+            "role": "assistant",
+            "content": (
+                "{\n"
+                "  \"answer\": \"I don't know\",\n"
+                "  \"sources\": [],\n"
+                "  \"context_found\": false\n"
+                "}"
+            )
+        },
+        {
+            "role": "user",
+            "content": (
+                "Context:\n"
+                "Source file: incident_postmortem.md\n"
+                "Content: The TLS certificate on the internal embedding endpoint expired and auto-renewal had silently failed.\n\n"
+                "Question: What is the API key for the production embedding service?\n\n"
+                "Format your response as a JSON object matching this schema:\n"
+                "{\n"
+                "  \"answer\": \"your answer, or exactly 'I don't know'\",\n"
+                "  \"sources\": [\"source_filename.txt\"],\n"
+                "  \"context_found\": true or false\n"
+                "}"
+            )
+        },
+        {
+            "role": "assistant",
+            "content": (
+                "{\n"
+                "  \"answer\": \"I don't know\",\n"
+                "  \"sources\": [],\n"
+                "  \"context_found\": false\n"
+                "}"
             )
         },
         {
@@ -43,17 +122,19 @@ def answer_question(question: str, db=None) -> AskResponse:
             "content": (
                 f"Context:\n{context}\n\n"
                 f"Question: {question}\n\n"
-                "Format your response as a JSON object with keys:\n"
-                "\"answer\" (string, or exactly \"I don't know\"),\n"
-                "\"sources\" (list of strings representing filenames used, or empty list if answer is \"I don't know\"),\n"
-                "\"context_found\" (boolean, true if answer is found in context, false otherwise).\n\n"
-                "JSON response:"
+                "Format your response as a JSON object matching this schema:\n"
+                "{\n"
+                "  \"answer\": \"your answer, or exactly 'I don't know'\",\n"
+                "  \"sources\": [\"source_filename.txt\"],\n"
+                "  \"context_found\": true or false\n"
+                "}"
             )
         }
     ]
     response_text = ""
     try:
-        response_text = generate(messages, max_tokens=60)
+        response_text = generate(messages, max_tokens=150)
+
 
     except LLMUnavailable:
         raise

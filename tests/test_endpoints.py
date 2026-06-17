@@ -8,6 +8,26 @@ os.environ["HF_TOKEN"] = "fake_hf_token"
 os.environ["MOCK_LLM"] = "true"
 os.environ["TRANSFORMERS_OFFLINE"] = "1"
 os.environ["HF_HUB_OFFLINE"] = "1"
+import sentence_transformers
+import numpy as np
+
+class MockSentenceTransformer:
+    def __init__(self, *args, **kwargs):
+        pass
+    def encode(self, texts, **kwargs):
+        if isinstance(texts, str):
+            return np.zeros(384)
+        return np.zeros((len(texts), 384))
+
+class MockCrossEncoder:
+    def __init__(self, *args, **kwargs):
+        pass
+    def predict(self, pairs, **kwargs):
+        return np.zeros(len(pairs))
+
+sentence_transformers.SentenceTransformer = MockSentenceTransformer
+sentence_transformers.CrossEncoder = MockCrossEncoder
+
 from app.main import app
 from app.database.db import get_db, Base
 from app.database.models import Document, Address, AddressDocument, DuplicateCandidate

@@ -1,92 +1,139 @@
-import sys
-import subprocess
+import csv
 import argparse
+from pathlib import Path
+from app.retriever import retrieve
+from app.rag import answer_question
 
-def run_script(script_name, extra_args):
-    cmd = [sys.executable, "-m", f"scripts.{script_name}"] + extra_args
-    res = subprocess.run(cmd, capture_output=True, text=True)
-    if res.returncode != 0:
-        return f"Error running {script_name}: {res.stderr.strip()}"
-    return res.stdout.strip()
+CSV_PATH = Path("evaluation/rag_questions_sample_key.csv")
 
-def parse_score(output_str):
-    try:
-        last_line = output_str.strip().split("\n")[-1]
-        if ":" in last_line:
-            parts = last_line.split(":")
-            return float(parts[-1].strip())
-    except Exception:
-        pass
-    return None
-
-def get_last_line(output_str):
-    if not output_str:
-        return ""
-    lines = [line.strip() for line in output_str.split("\n") if line.strip()]
-    return lines[-1] if lines else ""
-
-def main():
-    parser = argparse.ArgumentParser(description="Evaluate RAG pipeline scorecard by running separate evaluation scripts.")
+def parse_args():
+    parser = argparse.ArgumentParser(description="Evaluate the RAG pipeline scorecard in a single process.")
     parser.add_argument(
         "--sample-answerable", type=int, default=None,
-        help="Limit the number of answerable questions to evaluate. Default runs all."
+        help="Limit the number of answerable questions to evaluate."
     )
     parser.add_argument(
         "--sample-unanswerable", type=int, default=None,
-        help="Limit the number of unanswerable questions to evaluate. Default runs all."
+        help="Limit the number of unanswerable questions to evaluate."
     )
-    args = parser.parse_args()
-    extra_ans = []
+    return parser.parse_args()
+
+def main():
+    args = parse_args()
+    if not CSV_PATH.exists():
+        print(f"Error: CSV file not found at {CSV_PATH}")
+        return
+
+    with open(CSV_PATH, newline="", encoding="utf-8") as f:
+        reader = list(csv.DictReader(f))
+
+    # Split rows into answerable and unanswerable
+    answerable_rows = [row for row in reader if row.get("answer_file") and row["answer_file"].strip()]
+    unanswerable_rows = [row for row in reader if not row.get("answer_file") or not row["answer_file"].strip()]
+
+    # Apply limits if provided
     if args.sample_answerable is not None:
-        extra_ans = ["--sample-answerable", str(args.sample_answerable)]
-    extra_unans = []
+        answerable_rows = answerable_rows[:args.sample_answerable]
     if args.sample_unanswerable is not None:
-        extra_unans = ["--sample-unanswerable", str(args.sample_unanswerable)]
+        unanswerable_rows = unanswerable_rows[:args.sample_unanswerable]
 
-    print("Running separate evaluation scripts...")
-    recall_out = run_script("recall_at_4", extra_ans)
-    recall_rerank_out = run_script("recall_reranked", extra_ans)
-    recall_rewritten_out = run_script("recall_rewritten", extra_ans)
-    mrr_out = run_script("mrr", extra_ans)
-    mrr_rerank_out = run_script("mrr_reranked", extra_ans)
-    mrr_rewritten_out = run_script("mrr_rewritten", extra_ans)
-    accuracy_out = run_script("accuracy", extra_ans)
-    refusal_out = run_script("refusalrate", extra_unans)
+    print(f"Starting evaluation... (Answerable: {len(answerable_rows)}, Unanswerable: {len(unanswerable_rows)})", flush=True)
 
-    print("\n========================= SCORECARD =========================")
-    print(get_last_line(recall_out))
-    print(get_last_line(mrr_out))
-    print("-" * 60)
-    print(get_last_line(recall_rerank_out))
-    print(get_last_line(mrr_rerank_out))
-    print("-" * 60)
-    print(get_last_line(recall_rewritten_out))
-    print(get_last_line(mrr_rewritten_out))
-    print("-" * 60)
-    print(get_last_line(accuracy_out))
-    print(get_last_line(refusal_out))
-    print("=============================================================")
+    recall_hits = 0
+    mrr_sum = 0.0
+    accuracy_hits = 0
+    diagnoses = []
 
-    # Parse and find the weakest metric
-    metrics_dict = {}
-    def add_metric(name, output_str):
-        score = parse_score(output_str)
-        if score is not None:
-            metrics_dict[name] = score
+    # 1. Evaluate answerable questions
+    for idx, row in enumerate(answerable_rows, 1):
+        question = row["question"]
+        answer_file = row["answer_file"].strip()
+        expected_keyphrase = row["expected_keyphrase"].strip()
 
-    add_metric("Base Retrieval Recall@4", recall_out)
-    add_metric("Base Retrieval MRR", mrr_out)
-    add_metric("Reranked Retrieval Recall@4", recall_rerank_out)
-    add_metric("Reranked Retrieval MRR", mrr_rerank_out)
-    add_metric("Reranked + Rewritten Recall@4", recall_rewritten_out)
-    add_metric("Reranked + Rewritten MRR", mrr_rewritten_out)
-    add_metric("RAG Answer Accuracy", accuracy_out)
-    add_metric("RAG Refusal Rate", refusal_out)
+        print(f"[{idx}/{len(answerable_rows)}] Evaluating Answerable Q: '{question[:50]}...'", flush=True)
 
-    if metrics_dict:
-        weakest = min(metrics_dict, key=metrics_dict.get)
-        print(f"\nWeakest Metric: {weakest} (Score: {metrics_dict[weakest]:.4f})")
-        print("=============================================================")
+        # Retrieve (Recall & MRR)
+        try:
+            retrieved = retrieve(question, top_k=4)
+            files = [r["filename"] for r in retrieved]
+        except Exception as e:
+            print(f"  -> Retrieval error: {e}", flush=True)
+            files = []
+
+        is_recall_hit = answer_file in files
+        if is_recall_hit:
+            recall_hits += 1
+            rank = files.index(answer_file) + 1
+            mrr_sum += 1.0 / rank
+        
+        # Ask (Answer Accuracy)
+        try:
+            res = answer_question(question)
+            answer_text = res.answer
+        except Exception as e:
+            print(f"  -> RAG Answer error: {e}", flush=True)
+            answer_text = "ERROR"
+
+        is_accuracy_hit = expected_keyphrase.lower() in answer_text.lower()
+        if is_accuracy_hit:
+            accuracy_hits += 1
+        else:
+            # Diagnosis: retrieval hit but answer miss
+            if is_recall_hit:
+                diagnoses.append(
+                    f"  - '{question[:50]}...': right file retrieved but answer missed '{expected_keyphrase}' (Got: '{answer_text.strip()}')"
+                )
+
+    # 2. Evaluate unanswerable questions
+    refusal_hits = 0
+    for idx, row in enumerate(unanswerable_rows, 1):
+        question = row["question"]
+        print(f"[{idx}/{len(unanswerable_rows)}] Evaluating Unanswerable Q: '{question[:50]}...'", flush=True)
+
+        try:
+            res = answer_question(question)
+            answer_text = res.answer
+        except Exception as e:
+            print(f"  -> RAG Answer error: {e}", flush=True)
+            answer_text = "ERROR"
+
+        if "i don't know" in answer_text.lower():
+            refusal_hits += 1
+
+    # Compute final metrics
+    recall_score = recall_hits / len(answerable_rows) if answerable_rows else 0.0
+    mrr_score = mrr_sum / len(answerable_rows) if answerable_rows else 0.0
+    accuracy_score = accuracy_hits / len(answerable_rows) if answerable_rows else 0.0
+    refusal_score = refusal_hits / len(unanswerable_rows) if unanswerable_rows else 0.0
+
+    # Find weakest metric
+    metrics = {
+        "recall@4": recall_score,
+        "MRR": mrr_score,
+        "answer_accuracy": accuracy_score,
+        "refusal_rate": refusal_score
+    }
+    weakest = min(metrics, key=metrics.get)
+
+    # Print Scorecard
+    print("\n========================================")
+    print("RAG SCORECARD")
+    print("========================================")
+    print(f"  recall@4           {recall_score:.3f}")
+    print(f"  MRR                {mrr_score:.3f}")
+    print(f"  answer_accuracy    {accuracy_score:.3f}")
+    print(f"  refusal_rate       {refusal_score:.3f}")
+    print()
+    print(f"  answerable: {len(answerable_rows)}   unanswerable: {len(unanswerable_rows)}")
+    print(f"  weakest metric: {weakest} ({metrics[weakest]:.3f})")
+    print()
+    if diagnoses:
+        print("Retrieval-hit / answer-miss diagnoses:")
+        for diag in diagnoses:
+            print(diag)
+    else:
+        print("No Retrieval-hit / answer-miss diagnoses recorded.")
+    print("========================================")
 
 if __name__ == "__main__":
     main()

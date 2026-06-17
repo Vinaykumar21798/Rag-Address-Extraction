@@ -1,0 +1,10 @@
+RAG Diagnostics
+==================================================
+
+[1/8] Question: What forwarding address does the Office of Records notice give for future mail?
+Expected Keyphrase: '1600 Pennsylvania Ave' | Expected File: 'letter_dc.txt'
+Retrieved: ['letter_dc.txt', 'letter_dc.txt', 'letter_dc.txt', 'letter_tacoma.txt']
+  - File: letter_dc.txt (score: 7.8055)
+  - File: letter_dc.txt (score: 4.9414)
+  - File: letter_dc.txt (score: -1.2142)
+  - File: letter_tacoma.txt (score: -1.6335)

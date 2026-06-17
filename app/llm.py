@@ -2,6 +2,8 @@ from transformers import pipeline
 from app.exceptions import LLMUnavailable
 from transformers import AutoTokenizer, pipeline
 import os
+import torch
+torch.set_num_threads(4)
 LOCAL_MODEL_PATH = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "local_model", "qwen2.5-0.5b-instruct")
 )
@@ -25,7 +27,7 @@ else:
             task="text-generation",
             model=MODEL_NAME,
             trust_remote_code=True,
-            model_kwargs={"torch_dtype": "auto"}
+            model_kwargs={"dtype": "auto"}
         )
 
     except Exception as e:
@@ -48,6 +50,7 @@ def generate(messages, max_tokens=128):
         result = _generator(
             prompt,
             max_new_tokens=max_tokens,
+            max_length=None,
             do_sample=False,
             return_full_text=False
         )

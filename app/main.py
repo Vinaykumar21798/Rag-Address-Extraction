@@ -336,10 +336,10 @@ def rag_search(request: SearchRequest):
         metas = results["metadatas"][0]
         distances = results["distances"][0]
         for doc, meta, distance in zip(docs, metas, distances):
-            similarity = max(0, round(1 / (1 + distance), 4))
+            score_val = max(0.0, round(1.0 - distance, 4))
             hits.append({
                 "filename": meta.get("filename") or meta.get("source") or "",
-                "similarity": similarity,
+                "score": score_val,
                 "text": doc
             })
     return {
